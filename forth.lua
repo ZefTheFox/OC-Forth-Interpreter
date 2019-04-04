@@ -10,17 +10,92 @@ local WORDS = {
   ["+"] = {isLua = true}, [":"] = {isLua = true},
   EXIT = {isLua = true}, IGNORECAPS = {isLua = true},
   HOE = {isLua = true}, PAGE = {isLua = true},
-  IOXINIT = {isLua = true},
+  IOXINIT = {isLua = true}, IOXSET = {isLua = true},
+  DUP = {isLua = true}, [".S"] = {isLua = true},
+  [".*"] = {isLua = true},
 }
 
 local STACK = {n = 0} -- Stack, n is number of items in the stack
-local VER = "0a" -- Version
+local VARS = {}
+local VER = "0.0.1a" -- Version
 local HOE = true -- H.O.E. Halt on error
 local IGNORECAPS = false -- When enabled capitalizes inputs automatically
 local IDW = false -- Is defining word, best way I could think of doing this
 local CWD = ""    -- Current Word Definition, SHOULD BE BLANK WHEN IDW IS FALSE
 local CWN = ""    -- Current Word Name, SHOULD BE BLANK WHEN IDW IS FALSE
-local REDSTONECARD = {} -- Redstone Card, call IOXINIT to search for one
+local REDSTONECARD -- Redstone Card, call IOXINIT to search for one
+local SKIPLINES = 0 -- Set SKIPNEXT to true then increase this to skip more lines
+
+-- Write text to the screen
+WORDS[".*"][1] = function(_, wordIndex)
+  local hasEnd = false
+  local End
+  local returnString = ""
+  local function tableLen(tab); 
+    local count = 0 
+    for _ in pairs(tab) do;
+      count = count + 1; 
+    end; 
+    return count; 
+  end;
+
+  for i = wordIndex+1, tableLen(splitInput) do
+    if string.find(splitInput[i], "*") then; hasEnd = true; End = i; break; end
+  end
+
+  if hasEnd then
+    SKIPNEXT = true; SKIPLINES = End - wordIndex
+    for i = wordIndex+1, End do
+      preparedInput = splitInput[i]
+      if string.find(preparedInput, "*") then
+        preparedInput = string.sub(preparedInput, 1, string.find(preparedInput, "*")-1)
+      end
+      returnString = returnString.." "..preparedInput
+    end
+    io.write(returnString.."\n")
+  else
+    io.stderr:write("ERROR: String doesn't end\n")
+    return 1
+  end
+end
+
+-- Displays whole stack
+WORDS[".S"][1] = function()
+  if STACK.n > 0 then
+    for i, number in pairs(STACK) do
+      if i == "n" then; io.write(" N:"..number.." "); 
+      else; io.write(number.." "); end
+    end
+    io.write("\n")
+  else
+    io.stderr:write("Stack Empty\n")
+    return 0
+  end
+end
+
+-- Duplicate Top of stack
+WORDS.DUP[1] = function()
+  if STACK.n > 0 then
+    STACK[STACK.n+1] = STACK[STACK.n]
+    STACK.n = STACK.n+1
+  else
+    io.stderr:write("ERROR: Stack Empty\n")
+    return 1
+  end
+end
+
+-- Set redstone output
+WORDS.IOXSET[1] = function()
+  if REDSTONECARD and STACK.n > 1 then
+    REDSTONECARD.setOutput(STACK[STACK.n-1], STACK[STACK.n])
+    STACK[STACK.n] = nil
+    STACK[STACK.n-1] = nil
+    STACK.n = STACK.n - 2
+  else
+    io.stderr:write("ERROR: RS Card not Init or Stack Empty\n")
+    return 1
+  end
+end
 
 -- Try to find a redstone card
 WORDS.IOXINIT[1] = function()
@@ -104,10 +179,15 @@ end
 
 -- Begin Word Definition
 WORDS[":"][1] = function(NEXTWORD)
-  IDW = true
-  CWD = ""
-  CWN = NEXTWORD
-  return 2 -- Skip the next word
+  if NEXTWORD then
+    IDW = true
+    CWD = ""
+    CWN = NEXTWORD
+    return 2 -- Skip the next word
+  else
+    io.stderr:write("ERROR: A name is required\n")
+    return 1
+  end
 end
 
 -- Exit interpreter
@@ -117,7 +197,7 @@ end
 
 -- Interpret The Input
 local function interpret(input)
-  local splitInput = text.tokenize(input)
+  splitInput = text.tokenize(input)
 
   for wordIndex, wordText in pairs(splitInput) do
   if not SKIPNEXT and not IDW then
@@ -131,7 +211,7 @@ local function interpret(input)
         -- The Word Exists
         if WORDS[wordText].isLua then 
           -- Function is implemented in lua
-          local EXITCODE = WORDS[wordText][1](splitInput[wordIndex+1])
+          local EXITCODE = WORDS[wordText][1](splitInput[wordIndex+1], wordIndex)
           if EXITCODE == 1 and HOE then
             io.stderr:write("\nExecuting Stopped, View Error Above\n")
             break
@@ -141,15 +221,20 @@ local function interpret(input)
 
         else
           -- Function is implemented in Forth
-          interpret(WORDS[wordText][1])
+          interpret(WORDS[wordText][1], wordIndex)
         end
       else
         -- The Word Does Not Exist
+        
         io.stderr:write("ERROR: Word Does Not Exist\n")
       end
   
     end
-  elseif SKIPNEXT then; SKIPNEXT = false;
+  elseif SKIPNEXT then; SKIPNEXT = false; 
+    if SKIPLINES > 0 then
+      SKIPNEXT = true
+      SKIPLINES = SKIPLINES - 1
+    end
   else
     if wordText == ";" then
       WORDS[CWN] = {}; WORDS[CWN][1] = CWD; CWD = ""; CWN = ""; IDW = false;
