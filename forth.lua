@@ -45,30 +45,70 @@ words = {
 local isCompiling = false -- Keeps track of compiling
 local currentContent = "" -- Keeps track of the content of what is being compiled
 local currentName = "" -- Keeps track of the name of what is being compiled
+local currentWordIsLua = false -- Keeps track of if the word is being defined for lua
 
 local errors = {"Stack underflow", "Not enough information", "Variable already exists", [0]=""}
 stack = {n = 0} -- Initializes the stack
 rStack = {n = 0} -- Return stack, mainly for compatibility with Forth
-local variables = {ignoreCaps = "1", 0, debug = "2", 0, n = 1} -- Emulating memory addresses, should be reliably syncronized
+variables = {debugMode = {"1"}, 0, n = 1} -- Emulating memory addresses, should be reliably syncronized
 local version = "1.0.0-0002" -- Version number
 local skipIndex = 0
 
-local function reduceStack(); stack[stack.n] = nil; stack.n = stack.n-1;  end -- Used a lot
+local function reduceStack(); stack[stack.n] = nil; stack.n = stack.n-1; end -- Removes the top value from the stack
+local function writeStack(number); stack.n = stack.n + 1; stack[stack.n] = number; end -- Writes a new number to the stack
 
 -- Word definitions --
+
+-- Read from a variable
+-- (a -- n)
+words.system["@"] = {isLua = true}
+words.system["@"][1] = function()
+  if stack.n > 0 then
+    local address = stack[stack.n]
+    reduceStack()
+    writeStack(variables[tonumber(address)])
+  else
+    return 1
+  end
+end
+
+-- Write to a variable
+-- (n a -- )
+words.system["!"] = {isLua = true}
+words.system["!"][1] = function()
+  if stack.n > 1 then
+    local address = stack[stack.n]
+    local input = stack[stack.n-1]
+    reduceStack()
+    reduceStack()
+    variables[tonumber(address)] = input
+  else
+    return 1
+  end
+end
+
+-- Define a word in lua
+-- ( -- )
+words.system["L:"] = {isLua = true}
+words.system["L:"][1] = function(index, splitInput)
+  if splitInput[index+1] then
+    isCompiling = true
+    currentName = splitInput[index+1]
+    currentWordIsLua = true
+    skipIndex = 1
+  else
+    return 2
+  end
+end
 
 -- Define a word
 -- ( -- )
 words.system[":"] = {isLua = true}
 words.system[":"][1] = function(index, splitInput)
   if splitInput[index+1] then
-    hasEnd, endPos, fullString = stringUntil(splitInput, ";", index+1)
-    if hasEnd then
-      words.custom[splitInput[index+1]] = {fullString}
-      skipIndex = endPos
-    else
-      return 2
-    end
+    isCompiling = true
+    currentName = splitInput[index+1]
+    skipIndex = 1
   else
     return 2
   end
@@ -190,8 +230,7 @@ end
 -- Rest of the interpreter --
 local function number(input)
   if tonumber(input) then
-    stack[stack.n+1] = tonumber(input)
-    stack.n = stack.n+1
+    writeStack(tonumber(input))
     return 0 
   else
     return 1
@@ -213,16 +252,10 @@ local function loadExternal(file)
 end
 
 function interpret(input)
-  local splitInput
-  if variables[tonumber(variables.ignoreCaps)] == 0 then
-    splitInput = text.tokenize(input) -- Split input up into a table, with space as the delimiter
-  else
-    splitInput = text.tokenize(string.upper(input))
-  end
-
+  local splitInput = text.tokenize(input) -- Split input up into a table, with space as the delimiter
   for index, word in pairs(splitInput) do
-    if variables[variables.debug] == 1 then; print(stack[1], stack[2], stack[3]); end
-    if skipIndex <= 0 then
+    if variables[tonumber(variables.debugMode[1])] == 1 then; print(word, stack[1], stack[2], stack[3]); end
+    if skipIndex <= 0 and not isCompiling then
       local currentWordTable = nil
       local currentWordTable = words.system[word] or words.custom[word] or variables[word]
       if currentWordTable then
@@ -237,10 +270,27 @@ function interpret(input)
           break
         end
       end
-    else
+    elseif skipIndex > 0 then
       skipIndex = skipIndex - 1
+    elseif isCompiling then
+      if word == ";" then
+        isCompiling = false
+        words.custom[currentName] = {currentContent}
+        if currentWordIsLua then
+          words.custom[currentName][1] = load(currentContent)
+          currentWordIsLua = false
+          words.custom[currentName].isLua = true
+        end
+        currentName = ""
+        currentContent = ""
+      else
+        currentContent = currentContent.." "..word
+      end
+    
     end
+  
   end
+  
 end
 
 
@@ -256,5 +306,5 @@ local function main()
   end
 end
 
--- loadExternal("/mnt/633/forthExtended.lua") -- This is for my testing
+-- loadExternal("/mnt/633/forthExtended.lua")
 main()
