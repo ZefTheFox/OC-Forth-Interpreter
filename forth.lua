@@ -472,5 +472,5 @@ local function main()
   end
 end
 
-loadExternal("/mnt/633/forthExtended.lua")
+-- loadExternal("/mnt/633/forthExtended.lua")
 main()
